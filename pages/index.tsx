@@ -17,19 +17,26 @@ interface EventRow {
   URL?: string;
 }
 
-// 預設顏色對照表（可自己加/調整）
+// 推薦色票，可直接複製到Sheet使用
+// #2196f3 (藍), #4caf50 (綠), #ffeb3b (黃), #ff9800 (橘), #f44336 (紅)
+// #9c27b0 (紫), #00bcd4 (青), #607d8b (灰), #263238 (深灰)
 const personColors: Record<string, string> = {
   "RD": "#4caf50",
   "UI": "#2196f3",
   "PM": "#ff9800",
   "": "#607d8b",
 };
-
 function getColor(e: EventRow) {
-  // 允許 Color 欄填 HEX, 顏色名, 或空白（空白就自動分配）
   if (e.Color && /^#([0-9A-Fa-f]{3}){1,2}$/.test(e.Color)) return e.Color;
   if (e.Color && personColors[e.Color]) return personColors[e.Color];
   return personColors[e.Person] || "#607d8b";
+}
+
+function getDefaultDate(v?: string, plusDays?: number) {
+  if (v && !isNaN(Date.parse(v))) return v;
+  const d = new Date();
+  if (plusDays) d.setDate(d.getDate() + plusDays);
+  return d.toISOString().slice(0, 10);
 }
 
 async function fetchCSVData(url: string): Promise<EventRow[]> {
@@ -75,41 +82,48 @@ export default function Home({ events }: { events: EventRow[] }) {
     return () => clearInterval(id);
   }, [showMilestone, person, status]);
 
-  // 篩選器選項
   const personList = Array.from(new Set(events.map((e) => e.Person))).filter(Boolean);
   const statusList = Array.from(new Set(events.map((e) => e.Status))).filter(Boolean);
 
-  // 轉 FullCalendar 格式
-  const calendarEvents = filtered.map((e, idx) => ({
-    id: `${idx}`,
-    resourceId: e.Person,
-    title: e.Task,
-    start: e.Start,
-    end: e.End,
-    backgroundColor: getColor(e),
-    classNames: [e.Status.replace(/\s/g, "")],
-    extendedProps: { ...e }
-  }));
+  // Milestone優先排序
+  const milestonePeople = Array.from(new Set(filtered.filter(e => e.Type === "Milestone").map(e => e.Person)));
+  const normalPeople = personList.filter(p => !milestonePeople.includes(p));
+  const sortedPeople = [...milestonePeople, ...normalPeople];
+  const resources = sortedPeople.map((p) => ({ id: p, title: p }));
 
-  // resources
-  const resources = personList.map((p) => ({ id: p, title: p }));
+  // 甘特圖事件資料
+  const calendarEvents = filtered.map((e, idx) => {
+    // 無日期的任務預設今天~明天
+    const start = getDefaultDate(e.Start, 0);
+    const end = getDefaultDate(e.End, 1);
+    return {
+      id: `${idx}`,
+      resourceId: e.Person,
+      title: e.Task,
+      start,
+      end,
+      backgroundColor: getColor(e),
+      classNames: [e.Status.replace(/\s/g, "")],
+      extendedProps: { ...e }
+    };
+  });
 
   // 里程碑
   const milestoneEvents = filtered
     .filter((e) => e.Type === "Milestone")
     .map((e, idx) => ({
       id: `m-${idx}`,
-      start: e.Start,
+      start: getDefaultDate(e.Start, 0),
       resourceId: e.Person,
       display: "background",
       backgroundColor: "#d32f2f",
       borderColor: "#d32f2f"
     }));
 
-  // 🚀 自動決定最早/最晚日期（+ buffer）
+  // 覆蓋可視範圍：自動涵蓋所有日期
   const allDates = [
-    ...filtered.map(e => new Date(e.Start)),
-    ...filtered.map(e => new Date(e.End)),
+    ...filtered.map(e => new Date(getDefaultDate(e.Start, 0))),
+    ...filtered.map(e => new Date(getDefaultDate(e.End, 1))),
     today,
   ].filter(d => !isNaN(d.getTime()));
   const minDate = new Date(Math.min(...allDates.map(d => d.getTime())));
@@ -149,6 +163,15 @@ export default function Home({ events }: { events: EventRow[] }) {
           />
           <label htmlFor="milestone" className="ml-2">顯示里程碑</label>
         </div>
+        <div className="mb-4">
+          <div className="font-bold mb-2">推薦色票（複製貼入 Color 欄）：</div>
+          <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+            {["#2196f3","#4caf50","#ffeb3b","#ff9800","#f44336","#9c27b0","#00bcd4","#607d8b","#263238"].map(c=>
+              <div key={c} style={{background:c, width:22,height:22,borderRadius:3,border:'1px solid #aaa'}} title={c}></div>
+            )}
+          </div>
+          <div className="text-xs mt-1">如：#2196f3、#4caf50…</div>
+        </div>
       </aside>
 
       {/* Main */}
@@ -174,8 +197,34 @@ export default function Home({ events }: { events: EventRow[] }) {
             end: maxDate.toISOString().slice(0, 10)
           }}
           resourceAreaWidth="15%"
+          eventContent={arg => {
+            const { extendedProps } = arg.event;
+            const url = extendedProps.URL || extendedProps.Note;
+            const isLink = !!url && url.startsWith('http');
+            return (
+              <div
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  cursor: isLink ? "pointer" : "default",
+                  textDecoration: isLink ? "underline dotted #2196f3" : "none",
+                  color: isLink ? "#1976d2" : undefined,
+                  fontWeight: isLink ? 600 : 400,
+                  display: "flex", alignItems: "center"
+                }}
+                title={isLink ? "點擊可前往外部連結" : ""}
+              >
+                {arg.event.title}
+                {isLink && (
+                  <span style={{
+                    fontSize: 14, marginLeft: 4,
+                    color: "#2196f3"
+                  }}>🔗</span>
+                )}
+              </div>
+            );
+          }}
           eventClick={info => {
-            // 支援 Note 或 URL 欄位
             const url = info.event.extendedProps.URL || info.event.extendedProps.Note;
             if (url && url.startsWith('http')) {
               window.open(url, '_blank');
