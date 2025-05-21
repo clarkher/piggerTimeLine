@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import resourceTimelinePlugin from "@fullcalendar/resource-timeline";
@@ -15,6 +14,22 @@ interface EventRow {
   Progress: string;
   Color: string;
   Note: string;
+  URL?: string;
+}
+
+// 預設顏色對照表（可自己加/調整）
+const personColors: Record<string, string> = {
+  "RD": "#4caf50",
+  "UI": "#2196f3",
+  "PM": "#ff9800",
+  "": "#607d8b",
+};
+
+function getColor(e: EventRow) {
+  // 允許 Color 欄填 HEX, 顏色名, 或空白（空白就自動分配）
+  if (e.Color && /^#([0-9A-Fa-f]{3}){1,2}$/.test(e.Color)) return e.Color;
+  if (e.Color && personColors[e.Color]) return personColors[e.Color];
+  return personColors[e.Person] || "#607d8b";
 }
 
 async function fetchCSVData(url: string): Promise<EventRow[]> {
@@ -71,7 +86,7 @@ export default function Home({ events }: { events: EventRow[] }) {
     title: e.Task,
     start: e.Start,
     end: e.End,
-    backgroundColor: e.Color || "#607d8b",
+    backgroundColor: getColor(e),
     classNames: [e.Status.replace(/\s/g, "")],
     extendedProps: { ...e }
   }));
@@ -91,11 +106,16 @@ export default function Home({ events }: { events: EventRow[] }) {
       borderColor: "#d32f2f"
     }));
 
-  // 視窗範圍
-  const rangeStart = new Date(today);
-  rangeStart.setDate(today.getDate() - 7);
-  const rangeEnd = new Date(today);
-  rangeEnd.setDate(today.getDate() + 7);
+  // 🚀 自動決定最早/最晚日期（+ buffer）
+  const allDates = [
+    ...filtered.map(e => new Date(e.Start)),
+    ...filtered.map(e => new Date(e.End)),
+    today,
+  ].filter(d => !isNaN(d.getTime()));
+  const minDate = new Date(Math.min(...allDates.map(d => d.getTime())));
+  const maxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
+  minDate.setDate(minDate.getDate() - 7);
+  maxDate.setDate(maxDate.getDate() + 7);
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -150,10 +170,17 @@ export default function Home({ events }: { events: EventRow[] }) {
             right: ""
           }}
           visibleRange={{
-            start: rangeStart.toISOString().slice(0, 10),
-            end: rangeEnd.toISOString().slice(0, 10)
+            start: minDate.toISOString().slice(0, 10),
+            end: maxDate.toISOString().slice(0, 10)
           }}
           resourceAreaWidth="15%"
+          eventClick={info => {
+            // 支援 Note 或 URL 欄位
+            const url = info.event.extendedProps.URL || info.event.extendedProps.Note;
+            if (url && url.startsWith('http')) {
+              window.open(url, '_blank');
+            }
+          }}
         />
       </main>
       <style jsx global>{`
